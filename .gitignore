@@ -9,3 +9,7 @@ Thumbs.db
 build/
 dist/
 *.spec
+background.log
+background-out.log
+background-err.log
+watchdog-test*.log
