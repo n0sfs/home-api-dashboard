@@ -41,6 +41,13 @@ ISP lookup (cached) and the periodic speedtest itself.
   common home-router defaults, and only saves one that actually responds like
   this router's API. A change here is validated before saving and persists
   across restarts (stored in `history.db`, overriding the `.env` default).
+- **ISP outage check**: once your ISP is detected (Spectrum, Xfinity, AT&T,
+  Verizon, T-Mobile, Cox, CenturyLink, or Windstream/Kinetic), one-click links
+  to that provider's Downdetector page and its own official outage-checker
+  appear automatically, alongside a small map centered on your approximate
+  (city-level) location. This links out rather than pulling live outage data
+  in — Downdetector has no public API, and scraping it isn't something this
+  project does (see `CLAUDE.md` if you're curious why).
 - **Installable on your phone**: open the dashboard on your phone (while on
   the same network as the machine running it) and use your browser's "Add to
   Home Screen" — you get a real icon and a standalone window, no address bar.

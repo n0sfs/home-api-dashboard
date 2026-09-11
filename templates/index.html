@@ -15,6 +15,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { color-scheme: dark; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; background: #0f1115; color: #e6e6e6; }
@@ -143,6 +145,14 @@
       <button onclick="toggleRouterUrlEdit()">Cancel</button>
     </div>
     <p class="muted" id="router-config-note" style="margin-top:.3rem;"></p>
+
+    <h3 style="margin: 1.25rem 0 .5rem; font-size: .95rem;">ISP outage check</h3>
+    <p class="muted" id="isp-outage-note">Looking up ISP...</p>
+    <div class="controls-row" id="isp-outage-links" style="display:none;">
+      <a class="button" id="isp-downdetector-link" href="#" target="_blank" rel="noopener">Check Downdetector</a>
+      <a class="button" id="isp-official-link" href="#" target="_blank" rel="noopener" style="display:none;">Check official outage map</a>
+    </div>
+    <div id="isp-map" style="height:200px; border-radius:8px; margin-top:.75rem; display:none;"></div>
   </div>
 
   <div class="panel">
@@ -744,11 +754,59 @@ async function loadNetworkPanel() {
       const place = [isp.city, isp.region].filter(Boolean).join(', ');
       if (place) bits.push(place);
       document.getElementById('stat-isp').textContent = bits.length ? bits.join(' · ') : 'ISP unknown';
+      renderIspOutageInfo(isp);
     } else {
       document.getElementById('stat-isp').textContent = '';
     }
   } catch (e) {
     document.getElementById('stat-isp').textContent = 'Could not resolve ISP';
+  }
+}
+
+// ---------- ISP outage check (links only — see CLAUDE.md for why this
+// doesn't scrape Downdetector directly) + a geolocation map ----------
+
+let ispMap = null;
+let ispMapMarker = null;
+
+function renderIspOutageInfo(isp) {
+  const note = document.getElementById('isp-outage-note');
+  const links = document.getElementById('isp-outage-links');
+
+  if (isp.matched_provider) {
+    note.textContent = `Detected provider: ${isp.matched_provider}.`;
+    links.style.display = 'flex';
+    document.getElementById('isp-downdetector-link').href = isp.downdetector_url;
+    const officialLink = document.getElementById('isp-official-link');
+    if (isp.official_outage_url) {
+      officialLink.href = isp.official_outage_url;
+      officialLink.style.display = '';
+    } else {
+      officialLink.style.display = 'none';
+    }
+  } else {
+    note.textContent = isp.isp
+      ? `Provider "${isp.isp}" isn't in the known-providers list — try searching Downdetector directly.`
+      : '';
+    links.style.display = 'none';
+  }
+
+  if (isp.latitude != null && isp.longitude != null && typeof L !== 'undefined') {
+    const mapEl = document.getElementById('isp-map');
+    mapEl.style.display = 'block';
+    if (!ispMap) {
+      ispMap = L.map('isp-map', { zoomControl: false, attributionControl: true }).setView([isp.latitude, isp.longitude], 9);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+      }).addTo(ispMap);
+      ispMapMarker = L.marker([isp.latitude, isp.longitude]).addTo(ispMap);
+    } else {
+      ispMapMarker.setLatLng([isp.latitude, isp.longitude]);
+      ispMap.setView([isp.latitude, isp.longitude]);
+    }
+    const place = [isp.city, isp.region].filter(Boolean).join(', ');
+    if (place) ispMapMarker.bindPopup(place);
   }
 }
 

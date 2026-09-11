@@ -149,6 +149,10 @@ def init_db():
         )
         """
     )
+    isp_cache_columns = {row["name"] for row in conn.execute("PRAGMA table_info(isp_cache)")}
+    for col, col_type in (("latitude", "REAL"), ("longitude", "REAL")):
+        if col not in isp_cache_columns:
+            conn.execute(f"ALTER TABLE isp_cache ADD COLUMN {col} {col_type}")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS speedtest_history (
@@ -592,6 +596,38 @@ def resolve_hostname(ip):
         socket.setdefaulttimeout(old_timeout)
 
 
+# Downdetector has no public API — these are just deep links to its per-company
+# status pages (verified to actually resolve, not guessed), plus each provider's
+# own official outage-check page where one could be confirmed. Matching is a
+# simple case-insensitive substring check against whatever ipapi.co's "org"
+# field returns, which varies in exact wording, so keep keywords broad but not
+# so broad they'd false-positive-match an unrelated company name.
+ISP_PROVIDERS = [
+    (["spectrum", "charter"], "Spectrum", "spectrum", "https://www.spectrum.net/outage-map"),
+    (["comcast", "xfinity"], "Xfinity", "xfinity", "https://www.xfinity.com/support/articles/check-service-outage"),
+    (["at&t"], "AT&T", "att", "https://www.att.com/outages/"),
+    (["verizon"], "Verizon", "verizon", "https://www.verizon.com/support/residential/service-outage"),
+    (["t-mobile", "tmobile"], "T-Mobile", "t-mobile", "https://www.t-mobile.com/support/coverage/network-outages"),
+    (["cox communications"], "Cox", "cox-communications", "https://www.cox.com/residential/support/outages.html"),
+    (["centurylink", "lumen"], "CenturyLink", "centurylink", "https://www.centurylink.com/home/help/internet/internet-or-phone-not-working.html"),
+    (["windstream", "kinetic"], "Windstream (Kinetic)", "windstream", None),
+]
+
+
+def match_isp_provider(isp_name):
+    if not isp_name:
+        return None
+    lowered = isp_name.lower()
+    for keywords, display_name, slug, official_url in ISP_PROVIDERS:
+        if any(kw in lowered for kw in keywords):
+            return {
+                "matched_provider": display_name,
+                "downdetector_url": f"https://downdetector.com/status/{slug}/",
+                "official_outage_url": official_url,
+            }
+    return None
+
+
 @app.get("/api/router/isp")
 def router_isp():
     ip = request.args.get("ip")
@@ -605,20 +641,28 @@ def router_isp():
     if not ip:
         return jsonify({"error": "no public IP known yet"}), 404
 
-    if ip in ISP_CACHE:
-        return jsonify(ISP_CACHE[ip])
-
-    conn = get_db()
-    cached = conn.execute(
-        "SELECT ip, hostname, isp, city, region, country FROM isp_cache WHERE ip = ?", (ip,)
-    ).fetchone()
-    if cached:
+    cached = ISP_CACHE.get(ip)
+    if cached is None:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT ip, hostname, isp, city, region, country, latitude, longitude "
+            "FROM isp_cache WHERE ip = ?", (ip,)
+        ).fetchone()
         conn.close()
-        result = dict(cached)
-        ISP_CACHE[ip] = result
-        return jsonify(result)
+        if row:
+            cached = dict(row)
+            ISP_CACHE[ip] = cached
 
-    result = {"ip": ip, "hostname": resolve_hostname(ip), "isp": None, "city": None, "region": None, "country": None}
+    # A cache entry from before latitude/longitude was tracked has those as NULL —
+    # treat that as incomplete rather than serving a permanently mapless response.
+    if cached is not None and cached.get("latitude") is not None:
+        return jsonify({**cached, **(match_isp_provider(cached["isp"]) or {})})
+
+    result = {
+        "ip": ip, "hostname": resolve_hostname(ip), "isp": None,
+        "city": None, "region": None, "country": None,
+        "latitude": None, "longitude": None,
+    }
     try:
         r = requests.get(f"https://ipapi.co/{ip}/json/", timeout=5, headers={"User-Agent": "home-api-dashboard/1.0"})
         if r.ok:
@@ -628,6 +672,8 @@ def router_isp():
                 result["city"] = j.get("city")
                 result["region"] = j.get("region")
                 result["country"] = j.get("country_name")
+                result["latitude"] = j.get("latitude")
+                result["longitude"] = j.get("longitude")
     except requests.RequestException:
         pass
 
@@ -637,14 +683,17 @@ def router_isp():
     # this to the DB means it survives restarts instead of re-fetching every time.
     if result["isp"] is not None:
         ISP_CACHE[ip] = result
+        conn = get_db()
         conn.execute(
-            "INSERT OR REPLACE INTO isp_cache (ip, hostname, isp, city, region, country, looked_up_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (result["ip"], result["hostname"], result["isp"], result["city"], result["region"], result["country"], time.time()),
+            "INSERT OR REPLACE INTO isp_cache "
+            "(ip, hostname, isp, city, region, country, latitude, longitude, looked_up_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (result["ip"], result["hostname"], result["isp"], result["city"], result["region"],
+             result["country"], result["latitude"], result["longitude"], time.time()),
         )
         conn.commit()
-    conn.close()
-    return jsonify(result)
+        conn.close()
+    return jsonify({**result, **(match_isp_provider(result["isp"]) or {})})
 
 
 @app.get("/api/speedtest/current")
