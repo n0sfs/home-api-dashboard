@@ -8,6 +8,8 @@ things like reboots and firmware updates, and an hourly internet speed test.
 Everything runs locally — the only external calls are an occasional public-IP →
 ISP lookup (cached) and the periodic speedtest itself.
 
+![Dashboard screenshot](docs/screenshot.png)
+
 ## Features
 
 - **Live router status**, reformatted from raw JSON into readable grouped
@@ -94,3 +96,7 @@ Copy `.env.example` to `.env` and adjust as needed:
 - `templates/index.html` — the whole frontend (vanilla JS + Chart.js via CDN,
   no build step).
 - `history.db` — created on first run, not committed (see `.gitignore`).
+
+## License
+
+[MIT](LICENSE)
