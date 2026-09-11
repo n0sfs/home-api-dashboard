@@ -126,7 +126,22 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
     conn.commit()
+
+    # A router URL saved via the UI (manual entry or auto-discovery) overrides the
+    # .env default and persists across restarts.
+    global ROUTER_BASE_URL
+    row = conn.execute("SELECT value FROM app_config WHERE key = 'router_base_url'").fetchone()
+    if row and row["value"]:
+        ROUTER_BASE_URL = row["value"]
     conn.close()
 
 
@@ -222,6 +237,80 @@ def speedtest_loop():
         run_speedtest_once()
 
 
+def looks_like_router(url):
+    """GET <url>/api/v1/status and check the response has this router API's
+    expected shape, to avoid saving a URL that isn't actually our router."""
+    try:
+        r = requests.get(f"{url}/api/v1/status", timeout=2)
+        if not r.ok:
+            return False, f"HTTP {r.status_code}"
+        data = r.json()
+        if "wan" not in data or "system" not in data:
+            return False, "responded, but not with the expected router API shape"
+        return True, None
+    except requests.RequestException as err:
+        return False, str(err)
+    except ValueError:
+        return False, "response wasn't valid JSON"
+
+
+def set_router_base_url(url):
+    url = url.rstrip("/")
+    ok, err = looks_like_router(url)
+    if not ok:
+        return False, err
+
+    global ROUTER_BASE_URL
+    ROUTER_BASE_URL = url
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO app_config (key, value) VALUES ('router_base_url', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (url,),
+    )
+    conn.commit()
+    conn.close()
+    return True, None
+
+
+def guess_local_gateway():
+    """Best-effort guess at the LAN gateway IP: open a UDP socket toward a public
+    address (no packet actually sent for UDP) to learn which local IP the OS would
+    route through, then assume the gateway is that subnet's .1 — true for the
+    overwhelming majority of home routers, though not guaranteed."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return local_ip.rsplit(".", 1)[0] + ".1"
+    except OSError:
+        return None
+
+
+def discover_router_base_url():
+    """Try the likely gateway IP plus a short list of common home-router defaults,
+    in order, and use the first one that actually responds like this router's API."""
+    candidates = []
+    guessed = guess_local_gateway()
+    if guessed:
+        candidates.append(guessed)
+    for common in ("192.168.86.1", "192.168.1.1", "192.168.0.1", "10.0.0.1"):
+        if common not in candidates:
+            candidates.append(common)
+
+    tried = []
+    for ip in candidates:
+        url = f"http://{ip}"
+        ok, err = looks_like_router(url)
+        tried.append({"url": url, "ok": ok, "error": err})
+        if ok:
+            return url, tried
+    return None, tried
+
+
 @app.get("/")
 def index():
     return render_template("index.html", poll_interval=POLL_INTERVAL_SECONDS)
@@ -234,6 +323,37 @@ def router_status():
         return jsonify(r.json()), r.status_code
     except requests.RequestException as err:
         return jsonify({"error": "could not reach router", "detail": str(err)}), 502
+
+
+@app.get("/api/config/router")
+def router_config_get():
+    return jsonify({"router_base_url": ROUTER_BASE_URL})
+
+
+@app.post("/api/config/router")
+def router_config_set():
+    url = (request.get_json(silent=True) or {}).get("url", "").strip()
+    if not url:
+        return jsonify({"success": False, "error": "no URL given"}), 400
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = f"http://{url}"
+
+    ok, err = set_router_base_url(url)
+    if not ok:
+        return jsonify({"success": False, "error": err}), 502
+    return jsonify({"success": True, "router_base_url": ROUTER_BASE_URL})
+
+
+@app.post("/api/config/router/discover")
+def router_config_discover():
+    url, tried = discover_router_base_url()
+    if url is None:
+        return jsonify({"success": False, "tried": tried}), 502
+
+    ok, err = set_router_base_url(url)
+    if not ok:
+        return jsonify({"success": False, "tried": tried, "error": err}), 502
+    return jsonify({"success": True, "router_base_url": ROUTER_BASE_URL, "tried": tried})
 
 
 def parse_time_range():

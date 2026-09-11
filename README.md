@@ -32,6 +32,13 @@ ISP lookup (cached) and the periodic speedtest itself.
   and a bar chart bucketed by hour/day.
 - **Search & export**: filter any of the history views by a time range, and
   export the raw history as CSV or JSON.
+- **Router address discovery**: the "Router & network" panel shows the
+  currently-configured router address with **Change** (manual entry) and
+  **Auto-discover** buttons — no need to hand-edit `.env` or restart the app.
+  Auto-discover tries your machine's likely gateway IP plus a short list of
+  common home-router defaults, and only saves one that actually responds like
+  this router's API. A change here is validated before saving and persists
+  across restarts (stored in `history.db`, overriding the `.env` default).
 
 ## Run it
 
@@ -41,13 +48,11 @@ python -m venv .venv
 .venv\Scripts\python.exe app.py
 ```
 
-Open http://localhost:4200 (or whatever `PORT` is set to).
-
-**Set `ROUTER_BASE_URL` in `.env` to your router's actual LAN IP.** It defaults
-to `192.168.86.1` (Google Nest Wifi/OnHub's typical default gateway address),
-but this is just a hardcoded fallback — the app does not auto-discover your
-router on the network. If your router has a different LAN IP, the dashboard
-won't be able to reach it until you set this.
+Open http://localhost:4200 (or whatever `PORT` is set to). On first run it'll
+try to reach the router at `ROUTER_BASE_URL` (default `192.168.86.1`, a common
+Nest Wifi/OnHub gateway address, though not a guarantee) — if that's wrong for
+your network, use the **Change** or **Auto-discover** button in the "Router &
+network" panel rather than editing `.env` and restarting.
 
 ## Configuration
 
@@ -56,7 +61,7 @@ Copy `.env.example` to `.env` and adjust as needed:
 | Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `4200` | Port the Flask app listens on. |
-| `ROUTER_BASE_URL` | `http://192.168.86.1` | Your router's LAN address. |
+| `ROUTER_BASE_URL` | `http://192.168.86.1` | Startup default for your router's LAN address — only used if nothing's been saved yet via the UI's Change/Auto-discover buttons, which take precedence once set. |
 | `POLL_INTERVAL_SECONDS` | `30` | How often to poll the router's status API. |
 | `SPEEDTEST_INTERVAL_SECONDS` | `3600` | How often to run a real speedtest. Each run saturates the connection for ~10-20s and uses real data. |
 | `SPEEDTEST_SERVER_URLS` | (unset) | Comma-separated speedtest server upload URLs to pin to instead of the built-in defaults — see below. |

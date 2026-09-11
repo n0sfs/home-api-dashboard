@@ -121,6 +121,18 @@
         <div class="stat-sub" id="stat-isp">Looking up ISP...</div>
       </div>
     </div>
+
+    <div class="controls-row" style="margin-top:1rem;">
+      <span class="muted">Router address: <code id="router-url-display">—</code></span>
+      <button onclick="toggleRouterUrlEdit()" id="router-url-edit-btn">Change</button>
+      <button onclick="autoDiscoverRouter()" id="router-discover-btn">Auto-discover</button>
+    </div>
+    <div class="controls-row" id="router-url-edit-row" style="display:none;">
+      <input type="text" id="router-url-input" placeholder="http://192.168.1.1" style="flex:1; min-width:220px;">
+      <button onclick="saveRouterUrl()">Save</button>
+      <button onclick="toggleRouterUrlEdit()">Cancel</button>
+    </div>
+    <p class="muted" id="router-config-note" style="margin-top:.3rem;"></p>
   </div>
 
   <div class="panel">
@@ -730,6 +742,87 @@ async function loadNetworkPanel() {
   }
 }
 
+// ---------- Router connection (address) config ----------
+
+async function loadRouterConfig() {
+  try {
+    const r = await fetch('/api/config/router');
+    const cfg = await r.json();
+    document.getElementById('router-url-display').textContent = cfg.router_base_url;
+  } catch (e) {
+    document.getElementById('router-url-display').textContent = 'unknown';
+  }
+}
+
+function toggleRouterUrlEdit() {
+  const row = document.getElementById('router-url-edit-row');
+  const input = document.getElementById('router-url-input');
+  const showing = row.style.display !== 'none';
+  if (showing) {
+    row.style.display = 'none';
+  } else {
+    input.value = document.getElementById('router-url-display').textContent;
+    row.style.display = 'flex';
+    input.focus();
+  }
+}
+
+async function refreshAfterRouterChange() {
+  await loadRouterConfig();
+  await loadRouter();
+  await loadAll();
+}
+
+async function saveRouterUrl() {
+  const input = document.getElementById('router-url-input');
+  const note = document.getElementById('router-config-note');
+  const url = input.value.trim();
+  if (!url) return;
+  note.textContent = 'Checking...';
+  try {
+    const r = await fetch('/api/config/router', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const body = await r.json();
+    if (body.success) {
+      note.textContent = `Connected to ${body.router_base_url}.`;
+      document.getElementById('router-url-edit-row').style.display = 'none';
+      await refreshAfterRouterChange();
+    } else {
+      note.textContent = `Could not reach a router there: ${body.error}`;
+    }
+  } catch (e) {
+    note.textContent = 'Error: ' + e;
+  }
+}
+
+async function autoDiscoverRouter() {
+  const btn = document.getElementById('router-discover-btn');
+  const note = document.getElementById('router-config-note');
+  btn.disabled = true;
+  btn.textContent = 'Searching...';
+  note.textContent = 'Trying your network’s gateway address and common router defaults...';
+  try {
+    const r = await fetch('/api/config/router/discover', { method: 'POST' });
+    const body = await r.json();
+    if (body.success) {
+      note.textContent = `Found it at ${body.router_base_url}.`;
+      document.getElementById('router-url-edit-row').style.display = 'none';
+      await refreshAfterRouterChange();
+    } else {
+      const triedList = body.tried.map(t => t.url).join(', ');
+      note.textContent = `No router found at: ${triedList}. Enter the address manually instead.`;
+    }
+  } catch (e) {
+    note.textContent = 'Error: ' + e;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Auto-discover';
+  }
+}
+
 async function loadAll() {
   const outages = await loadOutages();
   outageWindows = outages;
@@ -741,6 +834,7 @@ async function loadAll() {
 }
 
 loadRouter();
+loadRouterConfig();
 loadAll();
 setInterval(loadAll, 30000);
 </script>
