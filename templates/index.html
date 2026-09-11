@@ -2,7 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Home API Dashboard</title>
+
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#0f1115" />
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Home Dashboard" />
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
@@ -837,6 +847,20 @@ loadRouter();
 loadRouterConfig();
 loadAll();
 setInterval(loadAll, 30000);
+
+// Only succeeds in a secure context (https:, or the browser's localhost
+// exemption) — a phone on the LAN visiting http://<lan-ip> won't register
+// one, since that's plain HTTP to a non-localhost origin. The "Add to Home
+// Screen" icon/standalone-window experience from manifest.json still works
+// there regardless; this only adds offline shell caching where it can run.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Not a secure context (e.g. LAN IP over http) — nothing to do, the
+      // page still works fully online, it just won't cache the shell.
+    });
+  });
+}
 </script>
 </body>
 </html>

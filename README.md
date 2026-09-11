@@ -41,6 +41,13 @@ ISP lookup (cached) and the periodic speedtest itself.
   common home-router defaults, and only saves one that actually responds like
   this router's API. A change here is validated before saving and persists
   across restarts (stored in `history.db`, overriding the `.env` default).
+- **Installable on your phone**: open the dashboard on your phone (while on
+  the same network as the machine running it) and use your browser's "Add to
+  Home Screen" — you get a real icon and a standalone window, no address bar.
+  One caveat: offline shell caching (via a service worker) only activates
+  when the page is loaded through `https://` or literally `localhost` — a
+  phone hitting the server's LAN IP over plain `http://` won't get that part,
+  but the home-screen icon and standalone window work regardless.
 
 ## Run it
 
@@ -78,8 +85,8 @@ locally instead:
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --name home-api-dashboard --add-data "templates;templates" app.py   # Windows
-pyinstaller --onefile --name home-api-dashboard --add-data "templates:templates" app.py   # Linux/macOS
+pyinstaller --onefile --name home-api-dashboard --add-data "templates;templates" --add-data "static;static" app.py   # Windows
+pyinstaller --onefile --name home-api-dashboard --add-data "templates:templates" --add-data "static:static" app.py   # Linux/macOS
 ```
 
 (PyInstaller can't cross-compile — build on the OS you're targeting, or let

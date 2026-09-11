@@ -44,7 +44,12 @@ def user_data_dir():
     return path
 
 
-app = Flask(__name__, template_folder=os.path.join(app_base_dir(), "templates"))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(app_base_dir(), "templates"),
+    static_folder=os.path.join(app_base_dir(), "static"),
+    static_url_path="",
+)
 app.config["TEMPLATES_AUTO_RELOAD"] = not is_frozen()
 
 ROUTER_BASE_URL = os.environ.get("ROUTER_BASE_URL", "http://192.168.86.1")

@@ -39,6 +39,7 @@ jobs:
         run: >
           pyinstaller --onefile --name home-api-dashboard
           --add-data "templates${{ matrix.data_sep }}templates"
+          --add-data "static${{ matrix.data_sep }}static"
           app.py
 
       - name: Rename artifact
