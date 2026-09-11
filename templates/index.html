@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Home API Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  .panel { border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+  .panel h2 { margin-top: 0; font-size: 1.1rem; display: flex; align-items: center; gap: .5rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #999; display: inline-block; }
+  .dot.ok { background: #2ecc71; }
+  .dot.err { background: #e74c3c; }
+  pre { background: #8881; padding: .75rem; border-radius: 8px; overflow-x: auto; font-size: .85rem; }
+  button { display: inline-block; margin: .25rem .5rem .5rem 0; padding: .4rem .8rem; border-radius: 6px; border: 1px solid #8886; background: #8881; cursor: pointer; font-size: .9rem; }
+  button:hover { background: #8882; }
+  .muted { opacity: .7; font-size: .85rem; }
+  .chart-wrap { position: relative; height: 200px; margin-bottom: 1.25rem; }
+  .chart-wrap:last-child { margin-bottom: 0; }
+  .chart-title { font-size: .85rem; font-weight: 600; margin: 0 0 .4rem; opacity: .85; }
+
+  .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: .75rem; }
+  .status-card { border: 1px solid #8883; border-radius: 8px; padding: .75rem .9rem; background: #8881; }
+  .status-card h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+  .status-card table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  .status-card td { padding: .2rem 0; vertical-align: top; }
+  .status-card td.key { opacity: .65; padding-right: .75rem; white-space: nowrap; }
+  .status-card td.val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+  .badge { display: inline-block; padding: .05rem .5rem; border-radius: 999px; font-size: .78rem; font-family: inherit; }
+  .badge.yes { background: #2ecc7133; color: #2ecc71; }
+  .badge.no { background: #e74c3c33; color: #e74c3c; }
+  .badge.warn { background: #f39c1233; color: #f39c12; }
+
+  .status-boxes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-top: .75rem; }
+  @media (max-width: 700px) { .status-boxes { grid-template-columns: 1fr; } }
+  .status-box { border: 1px solid #8883; border-radius: 8px; padding: .9rem 1rem; background: #8881; height: 650px; overflow-y: auto; box-sizing: border-box; }
+  .status-box > h3 { margin: 0 0 .6rem; font-size: .95rem; }
+  .status-box h4 { margin: .9rem 0 .35rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+  .status-box h4:first-of-type { margin-top: 0; }
+  .status-box table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  .status-box td { padding: .2rem 0; vertical-align: top; }
+  .status-box td.key { opacity: .65; padding-right: .75rem; white-space: nowrap; }
+  .status-box td.val { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: .5rem; }
+  .stat-box { border: 1px solid #8883; border-radius: 8px; padding: .75rem .9rem; background: #8881; }
+  .stat-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin-bottom: .3rem; }
+  .stat-value { font-size: 1.15rem; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+  .stat-sub { font-size: .8rem; margin-top: .35rem; opacity: .8; }
+  .top-scalars { margin-top: .75rem; font-size: .9rem; }
+  .top-scalars span.key { opacity: .65; margin-right: .4rem; }
+  .top-scalars span.val { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-right: 1.5rem; }
+
+  .controls-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: .75rem; }
+  .controls-row label { display: flex; flex-direction: column; font-size: .78rem; opacity: .8; gap: .2rem; }
+  .controls-row input { padding: .35rem .5rem; border-radius: 6px; border: 1px solid #8886; background: #8881; color: inherit; font-size: .85rem; }
+  a.button { display: inline-block; margin: .25rem .5rem .5rem 0; padding: .4rem .8rem; border-radius: 6px; border: 1px solid #8886; background: #8881; cursor: pointer; font-size: .9rem; text-decoration: none; color: inherit; }
+  a.button:hover { background: #8882; }
+
+  /* Outage banner */
+  .banner { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem; border-radius: 10px; margin-bottom: 1.5rem; font-weight: 600; }
+  .banner.online { background: #2ecc7122; border: 1px solid #2ecc7155; color: #2ecc71; }
+  .banner.offline { background: #e74c3c22; border: 1px solid #e74c3c55; color: #e74c3c; animation: pulse 2s infinite; }
+  .banner.unknown { background: #8882; border: 1px solid #8886; color: inherit; }
+  .banner .big-dot { width: 12px; height: 12px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .6; } }
+
+  /* Simple up/down timeline strip (not a chart) */
+  .timeline { display: flex; height: 34px; border-radius: 6px; overflow: hidden; gap: 1px; background: #8882; }
+  .timeline .seg { flex: 1 1 0; min-width: 1px; }
+  .timeline .seg.online { background: #2ecc71; }
+  .timeline .seg.offline { background: #e74c3c; }
+  .timeline .seg.unreachable { background: #999; }
+  .timeline-labels { display: flex; justify-content: space-between; font-size: .75rem; opacity: .6; margin-top: .3rem; }
+  .timeline-legend { display: flex; gap: 1rem; font-size: .78rem; opacity: .8; margin-top: .5rem; }
+  .timeline-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* Outages table */
+  table.outages { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: .5rem; }
+  table.outages th, table.outages td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #8883; }
+  table.outages th { opacity: .65; font-weight: 600; font-size: .78rem; text-transform: uppercase; }
+  .kind-tag { padding: .05rem .5rem; border-radius: 999px; font-size: .75rem; }
+  .kind-tag.offline { background: #e74c3c22; color: #e74c3c; }
+  .kind-tag.unreachable { background: #99999933; color: #999; }
+  .kind-tag.mixed { background: #f39c1222; color: #f39c12; }
+  .kind-tag.reboot { background: #9b59b622; color: #9b59b6; }
+  .kind-tag.public_ip_change { background: #4f9dde22; color: #4f9dde; }
+  .kind-tag.mesh_channel_change { background: #4f9dde22; color: #4f9dde; }
+  .kind-tag.firmware_update { background: #2ecc7122; color: #2ecc71; }
+
+  .chart-legend { display: flex; gap: 1rem; font-size: .78rem; opacity: .8; margin-bottom: .5rem; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+</style>
+</head>
+<body>
+  <h1>Home API Dashboard</h1>
+  <p class="muted">Local Nest Wifi router status, polled every 30s and logged for history.</p>
+
+  <div id="status-banner" class="banner unknown"><span class="big-dot"></span><span id="banner-text">Checking status...</span></div>
+
+  <div class="panel">
+    <h2>Router &amp; network</h2>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="stat-uptime">—</div>
+        <div class="stat-sub muted">Since last reboot — reboots show up in Notable changes below.</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Firmware</div>
+        <div class="stat-value" id="stat-firmware">—</div>
+        <div class="stat-sub" id="stat-firmware-sub"></div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Public IP</div>
+        <div class="stat-value" id="stat-ip">—</div>
+        <div class="stat-sub" id="stat-isp">Looking up ISP...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Internet speed test</h2>
+    <p class="muted" id="speedtest-note">Loading...</p>
+    <div class="controls-row">
+      <button onclick="runSpeedtestNow()" id="speedtest-run-btn">Run test now</button>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-label">Download</div>
+        <div class="stat-value" id="speedtest-download">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Upload</div>
+        <div class="stat-value" id="speedtest-upload">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Ping</div>
+        <div class="stat-value" id="speedtest-ping">—</div>
+      </div>
+    </div>
+    <div class="chart-wrap" style="margin-top:1.5rem;">
+      <p class="chart-title">Download / upload speed (Mbps)</p>
+      <div class="chart-legend">
+        <span><span class="legend-swatch" style="background:#4f9dde"></span> Download</span>
+        <span><span class="legend-swatch" style="background:#e67e22"></span> Upload</span>
+      </div>
+      <canvas id="speedtest-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>WAN uptime</h2>
+    <p class="muted" id="history-note">Loading history...</p>
+
+    <div class="controls-row">
+      <label>From <input type="datetime-local" id="range-start"></label>
+      <label>To <input type="datetime-local" id="range-end"></label>
+      <button onclick="applyRange()">Search</button>
+      <button onclick="resetRange()">Reset (last 500)</button>
+    </div>
+    <div class="controls-row">
+      <button onclick="loadAll()">Refresh</button>
+      <a class="button" id="export-csv" href="/api/router/export?format=csv">Export CSV</a>
+      <a class="button" id="export-json" href="/api/router/export?format=json">Export JSON</a>
+    </div>
+
+    <div id="timeline" class="timeline"></div>
+    <div class="timeline-labels"><span id="timeline-start-label"></span><span id="timeline-end-label"></span></div>
+    <div class="timeline-legend">
+      <span><span class="legend-swatch" style="background:#2ecc71"></span> Online</span>
+      <span><span class="legend-swatch" style="background:#e74c3c"></span> WAN offline</span>
+      <span><span class="legend-swatch" style="background:#999"></span> Router unreachable</span>
+    </div>
+
+    <h3 style="margin: 1.25rem 0 .25rem; font-size: .95rem;">Detected outages</h3>
+    <div id="outages-container"><p class="muted">Loading...</p></div>
+
+    <h3 style="margin: 1.25rem 0 .25rem; font-size: .95rem;">Notable changes</h3>
+    <p class="muted">Reboots, public IP changes, mesh channel changes, and firmware updates — useful for spotting what caused an outage.</p>
+    <div id="events-container"><p class="muted">Loading...</p></div>
+
+    <div class="chart-wrap" style="margin-top:1.5rem;">
+      <p class="chart-title">Router API latency (ms)</p>
+      <canvas id="latency-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2><span id="router-dot" class="dot"></span> Router status (local)</h2>
+    <button onclick="loadRouter()">Refresh</button>
+    <button onclick="toggleRaw()" id="raw-toggle">Show raw JSON</button>
+    <div id="top-scalars" class="top-scalars"></div>
+    <div id="status-boxes" class="status-boxes">
+      <div class="status-box">
+        <h3>Network</h3>
+        <div id="group-network"></div>
+      </div>
+      <div class="status-box">
+        <h3>Device</h3>
+        <div id="group-device"></div>
+      </div>
+    </div>
+    <pre id="router-out" style="display:none">Not loaded yet.</pre>
+  </div>
+
+<script>
+const POLL_INTERVAL_SECONDS = {{ poll_interval }};
+
+function labelize(key) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_]/g, ' ')
+    .replace(/^./, c => c.toUpperCase())
+    .trim();
+}
+
+function formatDuration(seconds) {
+  seconds = Math.floor(seconds);
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(d + 'd');
+  if (h || d) parts.push(h + 'h');
+  parts.push(m + 'm');
+  return parts.join(' ');
+}
+
+function formatValue(key, value) {
+  if (typeof value === 'boolean') {
+    return `<span class="badge ${value ? 'yes' : 'no'}">${value ? 'yes' : 'no'}</span>`;
+  }
+  if (Array.isArray(value)) {
+    return value.length ? value.join(', ') : '—';
+  }
+  if (/uptime/i.test(key) && typeof value === 'number') {
+    return `${value.toLocaleString()}s (${formatDuration(value)})`;
+  }
+  if (value === null || value === undefined || value === '') {
+    return '—';
+  }
+  return String(value);
+}
+
+// The 5 object-shaped sections consolidate into 2 boxes: connectivity-related vs. device-related.
+// Anything unrecognized (e.g. a field Google adds later) falls back into "device" rather than vanishing.
+const NETWORK_KEYS = new Set(['dns', 'meshInfo', 'wan']);
+
+function renderSection(container, key, value) {
+  const rows = Object.entries(value)
+    .map(([k, v]) => `<tr><td class="key">${labelize(k)}</td><td class="val">${formatValue(k, v)}</td></tr>`)
+    .join('');
+  container.innerHTML += `<h4>${labelize(key)}</h4><table>${rows}</table>`;
+}
+
+function renderStatus(json) {
+  const scalarsEl = document.getElementById('top-scalars');
+  const networkEl = document.getElementById('group-network');
+  const deviceEl = document.getElementById('group-device');
+  scalarsEl.innerHTML = '';
+  networkEl.innerHTML = '';
+  deviceEl.innerHTML = '';
+
+  for (const [key, value] of Object.entries(json)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      renderSection(NETWORK_KEYS.has(key) ? networkEl : deviceEl, key, value);
+    } else {
+      scalarsEl.innerHTML += `<span class="key">${labelize(key)}</span><span class="val">${formatValue(key, value)}</span>`;
+    }
+  }
+}
+
+function toggleRaw() {
+  const pre = document.getElementById('router-out');
+  const grid = document.getElementById('status-boxes');
+  const scalars = document.getElementById('top-scalars');
+  const btn = document.getElementById('raw-toggle');
+  const showingRaw = pre.style.display !== 'none';
+  pre.style.display = showingRaw ? 'none' : 'block';
+  grid.style.display = showingRaw ? 'grid' : 'none';
+  scalars.style.display = showingRaw ? 'block' : 'none';
+  btn.textContent = showingRaw ? 'Show raw JSON' : 'Show formatted';
+}
+
+async function loadRouter() {
+  const dot = document.getElementById('router-dot');
+  const pre = document.getElementById('router-out');
+  try {
+    const r = await fetch('/api/router/status');
+    const json = await r.json();
+    pre.textContent = JSON.stringify(json, null, 2);
+    renderStatus(json);
+    dot.className = 'dot ' + (r.ok ? 'ok' : 'err');
+  } catch (e) {
+    pre.textContent = 'Error: ' + e;
+    dot.className = 'dot err';
+  }
+}
+
+// ---------- Time range search ----------
+
+let currentRange = { start: null, end: null }; // unix seconds, or null = no filter
+
+function applyRange() {
+  const startEl = document.getElementById('range-start');
+  const endEl = document.getElementById('range-end');
+  currentRange.start = startEl.value ? Date.parse(startEl.value) / 1000 : null;
+  currentRange.end = endEl.value ? Date.parse(endEl.value) / 1000 : null;
+  loadAll();
+}
+
+function resetRange() {
+  document.getElementById('range-start').value = '';
+  document.getElementById('range-end').value = '';
+  currentRange = { start: null, end: null };
+  loadAll();
+}
+
+function rangeQueryString() {
+  const params = new URLSearchParams();
+  if (currentRange.start != null) params.set('start', currentRange.start);
+  if (currentRange.end != null) params.set('end', currentRange.end);
+  return params.toString();
+}
+
+function updateExportLinks() {
+  const qs = rangeQueryString();
+  const suffix = qs ? `&${qs}` : '';
+  document.getElementById('export-csv').href = `/api/router/export?format=csv${suffix}`;
+  document.getElementById('export-json').href = `/api/router/export?format=json${suffix}`;
+}
+
+// ---------- Status banner ----------
+
+async function loadBanner() {
+  const banner = document.getElementById('status-banner');
+  const text = document.getElementById('banner-text');
+  try {
+    const r = await fetch('/api/router/current');
+    const cur = await r.json();
+    if (cur.status === 'no_data') {
+      banner.className = 'banner unknown';
+      text.textContent = 'No data yet — waiting for the first poll.';
+      return;
+    }
+    const when = new Date(cur.ts * 1000).toLocaleTimeString();
+    if (cur.status === 'online') {
+      banner.className = 'banner online';
+      text.textContent = `WAN online — last checked ${when}`;
+    } else if (cur.status === 'offline') {
+      banner.className = 'banner offline';
+      text.textContent = `WAN OFFLINE — router reachable but no internet, as of ${when}`;
+    } else {
+      banner.className = 'banner offline';
+      text.textContent = `Router unreachable — last successful check ${when}`;
+    }
+  } catch (e) {
+    banner.className = 'banner unknown';
+    text.textContent = 'Could not load status: ' + e;
+  }
+}
+
+// ---------- Simple up/down timeline strip (plain HTML/CSS, not a chart) ----------
+
+function renderTimeline(points) {
+  const el = document.getElementById('timeline');
+  const startLabel = document.getElementById('timeline-start-label');
+  const endLabel = document.getElementById('timeline-end-label');
+  el.innerHTML = '';
+  if (!points.length) {
+    startLabel.textContent = '';
+    endLabel.textContent = '';
+    return;
+  }
+  for (const p of points) {
+    const status = !p.success ? 'unreachable' : (p.wan_online ? 'online' : 'offline');
+    const seg = document.createElement('div');
+    seg.className = 'seg ' + status;
+    seg.title = `${new Date(p.ts * 1000).toLocaleString()} — ${status}`;
+    el.appendChild(seg);
+  }
+  startLabel.textContent = new Date(points[0].ts * 1000).toLocaleString();
+  endLabel.textContent = new Date(points[points.length - 1].ts * 1000).toLocaleString();
+}
+
+// ---------- Outages table ----------
+
+function renderOutages(outages, briefCount) {
+  const el = document.getElementById('outages-container');
+  const briefNote = briefCount
+    ? `<p class="muted" style="margin-top:.4rem;">${briefCount} shorter blip(s) (a single missed poll — likely transient, not a real outage) filtered out.</p>`
+    : '';
+  if (!outages.length) {
+    el.innerHTML = `<p class="muted">No outages of note detected in this range.</p>${briefNote}`;
+    return;
+  }
+  const rows = outages.map(o => {
+    const start = new Date(o.start * 1000).toLocaleString();
+    const end = o.ongoing ? '<strong>ongoing</strong>' : new Date(o.end * 1000).toLocaleString();
+    const duration = formatDuration(o.duration_seconds) || '< 1m';
+    return `<tr>
+      <td>${start}</td>
+      <td>${end}</td>
+      <td>${duration}</td>
+      <td><span class="kind-tag ${o.kind}">${o.kind}</span></td>
+      <td>${o.samples}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table class="outages">
+    <thead><tr><th>Start</th><th>End</th><th>Duration</th><th>Type</th><th>Samples</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p class="muted" style="margin-top:.4rem;">Times are approximate to the ${POLL_INTERVAL_SECONDS}s polling interval.</p>
+  ${briefNote}`;
+}
+
+async function loadOutages() {
+  const qs = rangeQueryString();
+  try {
+    const r = await fetch('/api/router/outages' + (qs ? `?${qs}` : ''));
+    const { outages, brief_count } = await r.json();
+    renderOutages(outages, brief_count);
+    return outages;
+  } catch (e) {
+    document.getElementById('outages-container').innerHTML = `<p class="muted">Error loading outages: ${e}</p>`;
+    return [];
+  }
+}
+
+// ---------- Notable changes (reboots, IP/channel/firmware changes) ----------
+
+function renderEvents(events) {
+  const el = document.getElementById('events-container');
+  if (!events.length) {
+    el.innerHTML = '<p class="muted">No notable changes detected in this range.</p>';
+    return;
+  }
+  const rows = events.map(e => `<tr>
+    <td>${new Date(e.ts * 1000).toLocaleString()}</td>
+    <td><span class="kind-tag ${e.type}">${labelize(e.type)}</span></td>
+    <td>${e.detail}</td>
+  </tr>`).join('');
+  el.innerHTML = `<table class="outages">
+    <thead><tr><th>When</th><th>Type</th><th>Detail</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function loadEvents() {
+  const qs = rangeQueryString();
+  try {
+    const r = await fetch('/api/router/events' + (qs ? `?${qs}` : ''));
+    renderEvents(await r.json());
+  } catch (e) {
+    document.getElementById('events-container').innerHTML = `<p class="muted">Error loading events: ${e}</p>`;
+  }
+}
+
+// ---------- Charts (latency + uptime), with outage windows shaded ----------
+
+let latencyChart;
+let outageWindows = [];
+
+const outageBandsPlugin = {
+  id: 'outageBands',
+  beforeDatasetsDraw(chart) {
+    if (!outageWindows.length) return;
+    const { ctx, chartArea, scales } = chart;
+    if (!chartArea) return;
+    const x = scales.x;
+    ctx.save();
+    ctx.fillStyle = 'rgba(231, 76, 60, 0.15)';
+    for (const w of outageWindows) {
+      const x0 = x.getPixelForValue(w.start * 1000);
+      const x1 = x.getPixelForValue((w.ongoing ? Date.now() / 1000 : w.end) * 1000);
+      const left = Math.max(x0, chartArea.left);
+      const right = Math.min(x1, chartArea.right);
+      if (right > left) ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+    }
+    ctx.restore();
+  },
+};
+Chart.register(outageBandsPlugin);
+
+function makeChart(canvasId, opts) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, opts.color + '55');
+  gradient.addColorStop(1, opts.color + '02');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{
+      data: [],
+      borderColor: opts.color,
+      backgroundColor: gradient,
+      fill: true,
+      tension: 0.25,
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: 8,
+      pointBackgroundColor: opts.color,
+    }] },
+    options: {
+      animation: false,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: 'hour' }, ticks: { maxRotation: 0, color: '#8888' }, grid: { color: '#88881a' } },
+        y: { beginAtZero: true, ticks: { color: '#8888' }, grid: { color: '#88881a' }, ...(opts.yOptions || {}) },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => opts.tooltipFormat ? opts.tooltipFormat(item.parsed.y) : item.parsed.y,
+          },
+        },
+      },
+    },
+  });
+}
+
+async function loadHistory() {
+  const note = document.getElementById('history-note');
+  updateExportLinks();
+  try {
+    const qs = rangeQueryString();
+    const r = await fetch('/api/router/history' + (qs ? `?${qs}` : ''));
+    const points = await r.json();
+    const rangeLabel = qs ? ' matching the selected time range' : ' (polling every 30s — leave the app running to build up history)';
+    note.textContent = `${points.length} sample(s)${rangeLabel}.`;
+
+    renderTimeline(points);
+
+    const latency = points.filter(p => p.success).map(p => ({ x: p.ts * 1000, y: p.latency_ms }));
+
+    if (!latencyChart) {
+      latencyChart = makeChart('latency-chart', { color: '#f39c12', tooltipFormat: v => `${Math.round(v)} ms` });
+    }
+    latencyChart.data.datasets[0].data = latency;
+    latencyChart.update();
+  } catch (e) {
+    note.textContent = 'Error loading history: ' + e;
+  }
+}
+
+// ---------- Internet speed test ----------
+
+let speedtestChart;
+
+function makeSpeedtestChart() {
+  const ctx = document.getElementById('speedtest-chart').getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [
+      { label: 'Download', data: [], backgroundColor: '#4f9dde', borderRadius: 3, maxBarThickness: 36, categoryPercentage: 0.85, barPercentage: 0.95 },
+      { label: 'Upload', data: [], backgroundColor: '#e67e22', borderRadius: 3, maxBarThickness: 36, categoryPercentage: 0.85, barPercentage: 0.95 },
+    ] },
+    options: {
+      animation: false,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { maxRotation: 0, color: '#8888', autoSkip: true, maxTicksLimit: 14 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: '#8888' }, grid: { color: '#88881a' } },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(1)} Mbps` } },
+      },
+    },
+  });
+}
+
+// Bucket raw samples into hour (or day, for a wide range) slots, averaging within
+// each slot. Unlike only emitting slots that actually have a sample, this fills in
+// EVERY slot across the full span (first sample to last) — including empty ones —
+// so the chart reads as a real spread across the day/period, evenly spaced, rather
+// than whatever handful of hours happened to have a test run bunched together.
+// Chart.js draws no bar for a null value, so empty slots just show as gaps.
+function bucketSpeedtestPoints(points) {
+  if (!points.length) return { labels: [], download: [], upload: [] };
+  const spanHours = (points[points.length - 1].ts - points[0].ts) / 3600;
+  const byDay = spanHours > 48;
+
+  const floorToSlot = (d) => byDay
+    ? new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours());
+  const stepSlot = (d) => byDay
+    ? new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours() + 1);
+  const fmt = byDay
+    ? (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : (d) => d.toLocaleTimeString(undefined, { hour: 'numeric' });
+
+  const sums = new Map(); // slot start (ms) -> { sumDown, sumUp, count }
+  for (const p of points) {
+    const key = floorToSlot(new Date(p.ts * 1000)).getTime();
+    if (!sums.has(key)) sums.set(key, { sumDown: 0, sumUp: 0, count: 0 });
+    const b = sums.get(key);
+    b.sumDown += p.download_mbps;
+    b.sumUp += p.upload_mbps;
+    b.count += 1;
+  }
+
+  const labels = [], download = [], upload = [];
+  let slot = floorToSlot(new Date(points[0].ts * 1000));
+  const lastSlot = floorToSlot(new Date(points[points.length - 1].ts * 1000));
+  while (slot <= lastSlot) {
+    labels.push(fmt(slot));
+    const b = sums.get(slot.getTime());
+    download.push(b ? b.sumDown / b.count : null);
+    upload.push(b ? b.sumUp / b.count : null);
+    slot = stepSlot(slot);
+  }
+  return { labels, download, upload };
+}
+
+function renderSpeedtestCurrent(cur) {
+  const note = document.getElementById('speedtest-note');
+  if (!cur || cur.status === 'no_data') {
+    note.textContent = 'No speedtest results yet — the first one runs shortly after startup.';
+    return;
+  }
+  const when = new Date(cur.ts * 1000).toLocaleString();
+  if (!cur.success) {
+    note.textContent = `Last attempt failed at ${when}${cur.error ? ': ' + cur.error : ''}.`;
+    document.getElementById('speedtest-download').textContent = '—';
+    document.getElementById('speedtest-upload').textContent = '—';
+    document.getElementById('speedtest-ping').textContent = '—';
+    return;
+  }
+  note.textContent = `Last tested ${when} against ${cur.server_name || 'unknown server'}.`;
+  document.getElementById('speedtest-download').textContent = `${cur.download_mbps.toFixed(1)} Mbps`;
+  document.getElementById('speedtest-upload').textContent = `${cur.upload_mbps.toFixed(1)} Mbps`;
+  document.getElementById('speedtest-ping').textContent = cur.ping_ms != null ? `${cur.ping_ms.toFixed(0)} ms` : '—';
+}
+
+async function loadSpeedtestPanel() {
+  try {
+    const r = await fetch('/api/speedtest/current');
+    renderSpeedtestCurrent(await r.json());
+  } catch (e) {
+    document.getElementById('speedtest-note').textContent = 'Error loading speedtest status: ' + e;
+  }
+
+  try {
+    const r2 = await fetch('/api/speedtest/history');
+    const points = (await r2.json()).filter(p => p.success);
+    const bucketed = bucketSpeedtestPoints(points);
+    if (!speedtestChart) speedtestChart = makeSpeedtestChart();
+    speedtestChart.data.labels = bucketed.labels;
+    speedtestChart.data.datasets[0].data = bucketed.download;
+    speedtestChart.data.datasets[1].data = bucketed.upload;
+    speedtestChart.update();
+  } catch (e) {
+    // chart just stays empty; the note above already reports current-result errors
+  }
+}
+
+async function runSpeedtestNow() {
+  const btn = document.getElementById('speedtest-run-btn');
+  const note = document.getElementById('speedtest-note');
+  btn.disabled = true;
+  btn.textContent = 'Testing... (~15-20s)';
+  note.textContent = 'Running a speedtest now — this saturates the connection briefly.';
+  try {
+    const r = await fetch('/api/speedtest/run', { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json();
+      note.textContent = 'Speedtest failed: ' + (body.error || r.status);
+    } else {
+      await loadSpeedtestPanel();
+    }
+  } catch (e) {
+    note.textContent = 'Speedtest failed: ' + e;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run test now';
+  }
+}
+
+// ---------- Router & network stat panel ----------
+
+async function loadNetworkPanel() {
+  try {
+    const r = await fetch('/api/router/current');
+    const cur = await r.json();
+    if (cur.status === 'no_data') return;
+
+    document.getElementById('stat-uptime').textContent =
+      cur.uptime_seconds != null ? formatDuration(cur.uptime_seconds) : '—';
+
+    document.getElementById('stat-firmware').textContent = cur.software_version || '—';
+    const fwSub = document.getElementById('stat-firmware-sub');
+    if (cur.update_status === 'downloading' || cur.update_status === 'updating') {
+      fwSub.innerHTML = `<span class="badge warn">${labelize(cur.update_status)}${cur.update_progress ? ' — ' + Math.round(cur.update_progress * 100) + '%' : ''}</span>`;
+    } else if (cur.update_available) {
+      fwSub.innerHTML = `<span class="badge warn">Update available: ${cur.update_new_version}</span>`;
+    } else {
+      fwSub.innerHTML = `<span class="badge yes">Up to date</span>`;
+    }
+
+    document.getElementById('stat-ip').textContent = cur.public_ip || '—';
+  } catch (e) {
+    document.getElementById('stat-uptime').textContent = 'Error';
+  }
+
+  try {
+    const r2 = await fetch('/api/router/isp');
+    const isp = await r2.json();
+    if (r2.ok) {
+      const bits = [];
+      if (isp.isp) bits.push(isp.isp);
+      if (isp.hostname) bits.push(isp.hostname);
+      const place = [isp.city, isp.region].filter(Boolean).join(', ');
+      if (place) bits.push(place);
+      document.getElementById('stat-isp').textContent = bits.length ? bits.join(' · ') : 'ISP unknown';
+    } else {
+      document.getElementById('stat-isp').textContent = '';
+    }
+  } catch (e) {
+    document.getElementById('stat-isp').textContent = 'Could not resolve ISP';
+  }
+}
+
+async function loadAll() {
+  const outages = await loadOutages();
+  outageWindows = outages;
+  await loadHistory();
+  await loadBanner();
+  await loadEvents();
+  await loadNetworkPanel();
+  await loadSpeedtestPanel();
+}
+
+loadRouter();
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>
