@@ -6,3 +6,6 @@ history.db
 history.db-journal
 .DS_Store
 Thumbs.db
+build/
+dist/
+*.spec

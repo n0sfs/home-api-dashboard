@@ -44,17 +44,46 @@ ISP lookup (cached) and the periodic speedtest itself.
 
 ## Run it
 
+### Option A: prebuilt executable (Windows or Linux)
+
+Grab `home-api-dashboard-windows.exe` or `home-api-dashboard-linux` from the
+[latest release](../../releases/latest) — no Python install needed. Run it,
+then open http://localhost:4200. Its `history.db` lives in your per-user data
+directory (`%APPDATA%\home-api-dashboard\` on Windows,
+`~/.local/share/home-api-dashboard/` on Linux), not next to the executable.
+Drop a `.env` file next to the executable to override any setting below.
+
+### Option B: from source
+
 ```bash
 python -m venv .venv
 .venv\Scripts\pip.exe install -r requirements.txt
 .venv\Scripts\python.exe app.py
 ```
 
-Open http://localhost:4200 (or whatever `PORT` is set to). On first run it'll
-try to reach the router at `ROUTER_BASE_URL` (default `192.168.86.1`, a common
-Nest Wifi/OnHub gateway address, though not a guarantee) — if that's wrong for
-your network, use the **Change** or **Auto-discover** button in the "Router &
-network" panel rather than editing `.env` and restarting.
+Either way, open http://localhost:4200 (or whatever `PORT` is set to). On
+first run it'll try to reach the router at `ROUTER_BASE_URL` (default
+`192.168.86.1`, a common Nest Wifi/OnHub gateway address, though not a
+guarantee) — if that's wrong for your network, use the **Change** or
+**Auto-discover** button in the "Router & network" panel rather than editing
+`.env` and restarting.
+
+### Building the executable yourself
+
+Pushing a tag matching `v*` (e.g. `v1.0.0`) triggers
+[`.github/workflows/build.yml`](.github/workflows/build.yml), which builds
+both a Windows and a Linux binary via PyInstaller and attaches them to a
+GitHub Release — that's how the release binaries above get made. To build
+locally instead:
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile --name home-api-dashboard --add-data "templates;templates" app.py   # Windows
+pyinstaller --onefile --name home-api-dashboard --add-data "templates:templates" app.py   # Linux/macOS
+```
+
+(PyInstaller can't cross-compile — build on the OS you're targeting, or let
+the GitHub Actions workflow do both at once.)
 
 ## Configuration
 

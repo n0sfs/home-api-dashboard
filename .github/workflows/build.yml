@@ -1,0 +1,54 @@
+name: Build executables
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset_name: home-api-dashboard-windows.exe
+            build_path: dist/home-api-dashboard.exe
+            data_sep: ";"
+          - os: ubuntu-latest
+            asset_name: home-api-dashboard-linux
+            build_path: dist/home-api-dashboard
+            data_sep: ":"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        shell: bash
+        run: >
+          pyinstaller --onefile --name home-api-dashboard
+          --add-data "templates${{ matrix.data_sep }}templates"
+          app.py
+
+      - name: Rename artifact
+        shell: bash
+        run: mv "${{ matrix.build_path }}" "dist/${{ matrix.asset_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset_name }}

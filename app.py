@@ -3,6 +3,7 @@ import io
 import os
 import socket
 import sqlite3
+import sys
 import threading
 import time
 
@@ -13,13 +14,43 @@ from flask import Flask, Response, jsonify, render_template, request
 
 load_dotenv()
 
-app = Flask(__name__)
-app.config["TEMPLATES_AUTO_RELOAD"] = True
+
+def is_frozen():
+    """True when running as a PyInstaller-bundled executable rather than from source."""
+    return getattr(sys, "frozen", False)
+
+
+def app_base_dir():
+    """Where bundled resources (templates/) live: PyInstaller's extraction dir
+    when frozen, otherwise this file's own directory."""
+    if is_frozen():
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def user_data_dir():
+    """Where to persist history.db. When frozen, a bundled exe's own directory
+    (or the PyInstaller temp extraction dir in --onefile mode) isn't a reliable
+    place to write persistent data, so use a proper per-user data directory
+    instead. Running from source keeps the original next-to-app.py behavior."""
+    if not is_frozen():
+        return os.path.dirname(os.path.abspath(__file__))
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    path = os.path.join(base, "home-api-dashboard")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+app = Flask(__name__, template_folder=os.path.join(app_base_dir(), "templates"))
+app.config["TEMPLATES_AUTO_RELOAD"] = not is_frozen()
 
 ROUTER_BASE_URL = os.environ.get("ROUTER_BASE_URL", "http://192.168.86.1")
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", 30))
 SPEEDTEST_INTERVAL_SECONDS = int(os.environ.get("SPEEDTEST_INTERVAL_SECONDS", 3600))
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.db")
+DB_PATH = os.path.join(user_data_dir(), "history.db")
 
 # A speedtest saturates the connection for ~10-20s — never let two run at once
 # (a manual "run now" click racing the scheduled run would skew both results).
