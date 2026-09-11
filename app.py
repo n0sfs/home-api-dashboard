@@ -216,7 +216,14 @@ def poll_once():
 
 def poll_loop():
     while True:
-        poll_once()
+        # Skip this cycle if a speedtest is actively saturating the link — the
+        # router's own local API can briefly stop responding while its CPU is
+        # busy routing that traffic (confirmed: a router-unreachable blip lined
+        # up almost exactly with a speedtest run). That's an expected side
+        # effect of testing at all, not a real problem worth logging as an
+        # "outage" — logging it anyway would just be false-positive noise.
+        if not SPEEDTEST_LOCK.locked():
+            poll_once()
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -232,6 +239,14 @@ def run_speedtest_once():
         try:
             st = speedtest.Speedtest()
             st.get_best_server(servers=SPEEDTEST_SERVERS)
+            # Tried reducing thread count (1, then 3, vs. speedtest-cli's default 8)
+            # to lighten the router's load — both wrecked accuracy far more than
+            # proportionally (3 threads measured ~17 Mbps on a 200+ Mbps connection,
+            # not the ~90 Mbps a linear scale-down would predict), so there's no
+            # useful middle ground here: either the reading is trustworthy or it
+            # isn't. Left at the library default; see poll_loop() for the actual
+            # fix (skip logging a router poll while a speedtest is in flight,
+            # rather than trying to make the speedtest itself lighter).
             download_bps = st.download()
             upload_bps = st.upload()
             results = st.results.dict()
