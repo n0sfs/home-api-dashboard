@@ -107,8 +107,8 @@ Copy `.env.example` to `.env` and adjust as needed:
 |---|---|---|
 | `PORT` | `4200` | Port the Flask app listens on. |
 | `ROUTER_BASE_URL` | `http://192.168.86.1` | Startup default for your router's LAN address — only used if nothing's been saved yet via the UI's Change/Auto-discover buttons, which take precedence once set. |
-| `POLL_INTERVAL_SECONDS` | `30` | How often to poll the router's status API. |
-| `SPEEDTEST_INTERVAL_SECONDS` | `3600` | How often to run a real speedtest. Each run saturates the connection for ~10-20s and uses real data. |
+| `POLL_INTERVAL_SECONDS` | `30` | How often to poll the router's status API. Floored at 10s — lower values are ignored (with a warning logged) so a typo here can't turn this into something hammering your router. |
+| `SPEEDTEST_INTERVAL_SECONDS` | `3600` | How often to run a real speedtest. Each run saturates the connection for ~10-20s and uses real data. Floored at 300s (5 min) for the same reason. |
 | `SPEEDTEST_SERVER_URLS` | (unset) | Comma-separated speedtest server upload URLs to pin to instead of the built-in defaults — see below. |
 
 ## Known quirks worth knowing about

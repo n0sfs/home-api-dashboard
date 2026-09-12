@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 import os
 import socket
 import sqlite3
@@ -13,6 +14,9 @@ from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, render_template, request
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("home-api-dashboard")
 
 
 def is_frozen():
@@ -52,14 +56,63 @@ app = Flask(
 )
 app.config["TEMPLATES_AUTO_RELOAD"] = not is_frozen()
 
+def _env_int(name, default):
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        # Fail soft, not soft-crash-at-startup: a stray typo in .env
+        # (POLL_INTERVAL_SECONDS=3o0, say) shouldn't take the whole app down
+        # before it even gets to log anything useful.
+        logger.warning("%s=%r isn't a valid integer; using the default (%s) instead.", name, raw, default)
+        return default
+
+
 ROUTER_BASE_URL = os.environ.get("ROUTER_BASE_URL", "http://192.168.86.1")
-POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", 30))
-SPEEDTEST_INTERVAL_SECONDS = int(os.environ.get("SPEEDTEST_INTERVAL_SECONDS", 3600))
+
+# Hard floors on the two configurable intervals, regardless of what .env says —
+# this is a background process that runs unattended and indefinitely, so a
+# typo or an over-eager edit (POLL_INTERVAL_SECONDS=1, say) shouldn't be able
+# to turn it into something hammering the router or repeatedly saturating the
+# household's internet connection. 10s still leaves plenty of headroom above
+# what a router's local status API needs to handle comfortably; 300s (5 min)
+# is already a lot more often than most people would want a ~10-20s speed
+# test saturating their link for.
+MIN_POLL_INTERVAL_SECONDS = 10
+MIN_SPEEDTEST_INTERVAL_SECONDS = 300
+
+_poll_interval_configured = _env_int("POLL_INTERVAL_SECONDS", 30)
+POLL_INTERVAL_SECONDS = max(MIN_POLL_INTERVAL_SECONDS, _poll_interval_configured)
+if POLL_INTERVAL_SECONDS != _poll_interval_configured:
+    logger.warning(
+        "POLL_INTERVAL_SECONDS=%s is below the %ss floor (protects the router from "
+        "being polled too aggressively); using %ss instead.",
+        _poll_interval_configured, MIN_POLL_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS,
+    )
+
+_speedtest_interval_configured = _env_int("SPEEDTEST_INTERVAL_SECONDS", 3600)
+SPEEDTEST_INTERVAL_SECONDS = max(MIN_SPEEDTEST_INTERVAL_SECONDS, _speedtest_interval_configured)
+if SPEEDTEST_INTERVAL_SECONDS != _speedtest_interval_configured:
+    logger.warning(
+        "SPEEDTEST_INTERVAL_SECONDS=%s is below the %ss floor (each run saturates "
+        "the connection for ~10-20s); using %ss instead.",
+        _speedtest_interval_configured, MIN_SPEEDTEST_INTERVAL_SECONDS, SPEEDTEST_INTERVAL_SECONDS,
+    )
+
 DB_PATH = os.path.join(user_data_dir(), "history.db")
 
 # A speedtest saturates the connection for ~10-20s — never let two run at once
 # (a manual "run now" click racing the scheduled run would skew both results).
 SPEEDTEST_LOCK = threading.Lock()
+
+# Each discovery attempt fires off several probe requests (gateway guess + a
+# handful of common router defaults). Nothing about that is heavy on its own,
+# but a double-click, an impatient repeat click, or a stray script hitting the
+# endpoint in a loop shouldn't be able to stack up overlapping bursts of them —
+# same reasoning as SPEEDTEST_LOCK above.
+DISCOVER_LOCK = threading.Lock()
 SPEEDTEST_COLUMNS = ["ts", "success", "download_mbps", "upload_mbps", "ping_ms", "server_name", "error"]
 SPEEDTEST_COLUMN_LIST_SQL = ", ".join(SPEEDTEST_COLUMNS)
 
@@ -99,6 +152,22 @@ COLUMNS = [
 ]
 COLUMN_LIST_SQL = ", ".join(COLUMNS)
 
+# Human-readable CSV column headers (the export is meant to be opened in a
+# spreadsheet) — the raw names above stay as the SQL/JSON field names.
+CSV_HEADERS = {
+    "ts": "Timestamp",
+    "success": "Poll Succeeded",
+    "latency_ms": "Latency (ms)",
+    "wan_online": "WAN Online",
+    "ethernet_link": "Ethernet Link",
+    "uptime_seconds": "Uptime (s)",
+    "mesh_channel": "Mesh Channel",
+    "public_ip": "Public IP",
+    "software_version": "Software Version",
+    "update_new_version": "Update Available Version",
+    "update_status": "Update Status",
+}
+
 # Public-IP -> hostname/ISP lookups are cached in the isp_cache table (persists across
 # restarts) with an in-memory layer on top (avoids a DB round trip on every 30s poll).
 ISP_CACHE = {}
@@ -107,6 +176,11 @@ ISP_CACHE = {}
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Two background threads (poll_loop, speedtest_loop) plus request handlers can
+    # all open writes around the same moment; without this, a write that lands
+    # mid-transaction elsewhere fails immediately with "database is locked"
+    # instead of just waiting briefly for the other one to finish.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -226,8 +300,15 @@ def poll_loop():
         # up almost exactly with a speedtest run). That's an expected side
         # effect of testing at all, not a real problem worth logging as an
         # "outage" — logging it anyway would just be false-positive noise.
-        if not SPEEDTEST_LOCK.locked():
-            poll_once()
+        try:
+            if not SPEEDTEST_LOCK.locked():
+                poll_once()
+        except Exception:
+            # This is a daemon thread with nothing else watching it — an
+            # uncaught exception here (e.g. a transient DB or disk error)
+            # would otherwise kill polling silently and permanently, for as
+            # long as the app stays running. Log it and try again next cycle.
+            logger.exception("poll_once() failed unexpectedly; will retry next cycle")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -285,11 +366,20 @@ def speedtest_loop():
     # +1s buffer: time.sleep() commonly wakes a fraction of a second early, and
     # landing at e.g. 11:59:59 instead of 12:00:00 would bucket the run into the
     # wrong hour on the chart (bucketing floors to the hour the timestamp falls in).
-    run_speedtest_once()
+    try:
+        run_speedtest_once()
+    except Exception:
+        logger.exception("initial speedtest run failed unexpectedly")
     while True:
         sleep_seconds = SPEEDTEST_INTERVAL_SECONDS - (time.time() % SPEEDTEST_INTERVAL_SECONDS) + 1
         time.sleep(sleep_seconds)
-        run_speedtest_once()
+        try:
+            run_speedtest_once()
+        except Exception:
+            # Same reasoning as poll_loop(): don't let one bad run (e.g. a DB
+            # write error after the speedtest itself succeeded) silently end
+            # all future scheduled speedtests for the rest of the app's uptime.
+            logger.exception("run_speedtest_once() failed unexpectedly; will retry next cycle")
 
 
 def looks_like_router(url):
@@ -401,7 +491,13 @@ def router_config_set():
 
 @app.post("/api/config/router/discover")
 def router_config_discover():
-    url, tried = discover_router_base_url()
+    if not DISCOVER_LOCK.acquire(blocking=False):
+        return jsonify({"success": False, "error": "a discovery attempt is already running"}), 409
+    try:
+        url, tried = discover_router_base_url()
+    finally:
+        DISCOVER_LOCK.release()
+
     if url is None:
         return jsonify({"success": False, "tried": tried}), 502
 
@@ -590,7 +686,11 @@ def resolve_hostname(ip):
     socket.setdefaulttimeout(3)
     try:
         return socket.gethostbyaddr(ip)[0]
-    except (socket.herror, socket.gaierror, socket.timeout):
+    except OSError:
+        # Covers socket.herror/gaierror/timeout (all OSError subclasses) plus
+        # anything else the platform's resolver can raise for a malformed or
+        # unresolvable address — this is reachable with a user-supplied ?ip=,
+        # so it shouldn't be able to 500 the request.
         return None
     finally:
         socket.setdefaulttimeout(old_timeout)
@@ -751,9 +851,15 @@ def router_export():
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(COLUMNS)
+    writer.writerow([CSV_HEADERS[c] for c in COLUMNS])
     for row in rows:
-        writer.writerow([row[c] for c in COLUMNS])
+        values = []
+        for c in COLUMNS:
+            v = row[c]
+            if c == "ts" and v is not None:
+                v = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(v))
+            values.append(v)
+        writer.writerow(values)
     return Response(
         buf.getvalue(),
         mimetype="text/csv",
@@ -763,7 +869,14 @@ def router_export():
 
 if __name__ == "__main__":
     init_db()
+    logger.info(
+        "Starting background pollers (router every %ss, speedtest every %ss); router at %s",
+        POLL_INTERVAL_SECONDS, SPEEDTEST_INTERVAL_SECONDS, ROUTER_BASE_URL,
+    )
     threading.Thread(target=poll_loop, daemon=True).start()
     threading.Thread(target=speedtest_loop, daemon=True).start()
-    port = int(os.environ.get("PORT", 4200))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = _env_int("PORT", 4200)
+    logger.info("Listening on http://0.0.0.0:%s", port)
+    # threaded=True so the several fetches the dashboard fires per refresh can be
+    # served concurrently instead of queueing behind each other one at a time.
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

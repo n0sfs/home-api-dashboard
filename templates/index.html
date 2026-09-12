@@ -134,13 +134,13 @@
       </div>
     </div>
 
-    <div class="controls-row" style="margin-top:1rem;">
+    <div class="controls-row" style="margin-top:1rem; align-items:center;">
       <span class="muted">Router address: <code id="router-url-display">—</code></span>
       <button onclick="toggleRouterUrlEdit()" id="router-url-edit-btn">Change</button>
       <button onclick="autoDiscoverRouter()" id="router-discover-btn">Auto-discover</button>
     </div>
     <div class="controls-row" id="router-url-edit-row" style="display:none;">
-      <input type="text" id="router-url-input" placeholder="http://192.168.1.1" style="flex:1; min-width:220px;">
+      <input type="text" id="router-url-input" placeholder="http://192.168.1.1" style="flex:1; min-width:220px;" onkeydown="if (event.key === 'Enter') saveRouterUrl();">
       <button onclick="saveRouterUrl()">Save</button>
       <button onclick="toggleRouterUrlEdit()">Cancel</button>
     </div>
@@ -190,8 +190,8 @@
     <p class="muted" id="history-note">Loading history...</p>
 
     <div class="controls-row">
-      <label>From <input type="datetime-local" id="range-start"></label>
-      <label>To <input type="datetime-local" id="range-end"></label>
+      <label>From <input type="datetime-local" id="range-start" onkeydown="if (event.key === 'Enter') applyRange();"></label>
+      <label>To <input type="datetime-local" id="range-end" onkeydown="if (event.key === 'Enter') applyRange();"></label>
       <button onclick="applyRange()">Search</button>
       <button onclick="resetRange()">Reset (last 500)</button>
     </div>
@@ -261,6 +261,13 @@ function formatDuration(seconds) {
   if (h || d) parts.push(h + 'h');
   parts.push(m + 'm');
   return parts.join(' ');
+}
+
+function latencyAxisMax(values) {
+  if (!values.length) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const p95 = sorted[Math.floor(sorted.length * 0.95)];
+  return Math.max(200, Math.ceil((p95 * 1.4) / 50) * 50);
 }
 
 function formatValue(key, value) {
@@ -369,31 +376,31 @@ function updateExportLinks() {
 
 // ---------- Status banner ----------
 
-async function loadBanner() {
+// Takes the already-fetched /api/router/current result (loadAll() fetches it once
+// and shares it with loadNetworkPanel() too, rather than each loading it separately).
+function renderBanner(cur) {
   const banner = document.getElementById('status-banner');
   const text = document.getElementById('banner-text');
-  try {
-    const r = await fetch('/api/router/current');
-    const cur = await r.json();
-    if (cur.status === 'no_data') {
-      banner.className = 'banner unknown';
-      text.textContent = 'No data yet — waiting for the first poll.';
-      return;
-    }
-    const when = new Date(cur.ts * 1000).toLocaleTimeString();
-    if (cur.status === 'online') {
-      banner.className = 'banner online';
-      text.textContent = `WAN online — last checked ${when}`;
-    } else if (cur.status === 'offline') {
-      banner.className = 'banner offline';
-      text.textContent = `WAN OFFLINE — router reachable but no internet, as of ${when}`;
-    } else {
-      banner.className = 'banner offline';
-      text.textContent = `Router unreachable — last successful check ${when}`;
-    }
-  } catch (e) {
+  if (!cur) {
     banner.className = 'banner unknown';
-    text.textContent = 'Could not load status: ' + e;
+    text.textContent = 'Could not load status.';
+    return;
+  }
+  if (cur.status === 'no_data') {
+    banner.className = 'banner unknown';
+    text.textContent = 'No data yet — waiting for the first poll.';
+    return;
+  }
+  const when = new Date(cur.ts * 1000).toLocaleTimeString();
+  if (cur.status === 'online') {
+    banner.className = 'banner online';
+    text.textContent = `WAN online — last checked ${when}`;
+  } else if (cur.status === 'offline') {
+    banner.className = 'banner offline';
+    text.textContent = `WAN OFFLINE — router reachable but no internet, as of ${when}`;
+  } else {
+    banner.className = 'banner offline';
+    text.textContent = `Router unreachable — last successful check ${when}`;
   }
 }
 
@@ -434,7 +441,7 @@ function renderOutages(outages, briefCount) {
   const rows = outages.map(o => {
     const start = new Date(o.start * 1000).toLocaleString();
     const end = o.ongoing ? '<strong>ongoing</strong>' : new Date(o.end * 1000).toLocaleString();
-    const duration = formatDuration(o.duration_seconds) || '< 1m';
+    const duration = o.duration_seconds < 60 ? '< 1m' : formatDuration(o.duration_seconds);
     return `<tr>
       <td>${start}</td>
       <td>${end}</td>
@@ -576,6 +583,12 @@ async function loadHistory() {
       latencyChart = makeChart('latency-chart', { color: '#f39c12', tooltipFormat: v => `${Math.round(v)} ms` });
     }
     latencyChart.data.datasets[0].data = latency;
+    // A handful of spikes (e.g. router briefly busy) can otherwise stretch the
+    // axis so far that the normal baseline reading flattens out and becomes
+    // unreadable. Cap the axis a bit above the typical (95th percentile)
+    // reading instead — spikes past that still show, just clipped at the top
+    // of the chart, and the exact value is still there on hover.
+    latencyChart.options.scales.y.max = latencyAxisMax(latency.map(p => p.y));
     latencyChart.update();
   } catch (e) {
     note.textContent = 'Error loading history: ' + e;
@@ -720,12 +733,11 @@ async function runSpeedtestNow() {
 
 // ---------- Router & network stat panel ----------
 
-async function loadNetworkPanel() {
-  try {
-    const r = await fetch('/api/router/current');
-    const cur = await r.json();
-    if (cur.status === 'no_data') return;
-
+// Takes the already-fetched /api/router/current result — see renderBanner() above.
+async function loadNetworkPanel(cur) {
+  if (!cur) {
+    document.getElementById('stat-uptime').textContent = 'Error';
+  } else if (cur.status !== 'no_data') {
     document.getElementById('stat-uptime').textContent =
       cur.uptime_seconds != null ? formatDuration(cur.uptime_seconds) : '—';
 
@@ -740,8 +752,6 @@ async function loadNetworkPanel() {
     }
 
     document.getElementById('stat-ip').textContent = cur.public_ip || '—';
-  } catch (e) {
-    document.getElementById('stat-uptime').textContent = 'Error';
   }
 
   try {
@@ -806,7 +816,14 @@ function renderIspOutageInfo(isp) {
       ispMap.setView([isp.latitude, isp.longitude]);
     }
     const place = [isp.city, isp.region].filter(Boolean).join(', ');
-    if (place) ispMapMarker.bindPopup(place);
+    if (place) {
+      // Build the popup content as a text node rather than handing Leaflet a
+      // raw string — city/region come from a third-party geolocation API
+      // (ipapi.co), and bindPopup() treats a string argument as HTML.
+      const popupEl = document.createElement('div');
+      popupEl.textContent = place;
+      ispMapMarker.bindPopup(popupEl);
+    }
   }
 }
 
@@ -879,9 +896,13 @@ async function autoDiscoverRouter() {
       note.textContent = `Found it at ${body.router_base_url}.`;
       document.getElementById('router-url-edit-row').style.display = 'none';
       await refreshAfterRouterChange();
-    } else {
+    } else if (body.tried && body.tried.length) {
       const triedList = body.tried.map(t => t.url).join(', ');
       note.textContent = `No router found at: ${triedList}. Enter the address manually instead.`;
+    } else {
+      // No `tried` list means discovery itself didn't run (e.g. one was already
+      // in progress) rather than running and finding nothing.
+      note.textContent = body.error ? `Could not auto-discover: ${body.error}` : 'Auto-discover failed.';
     }
   } catch (e) {
     note.textContent = 'Error: ' + e;
@@ -892,19 +913,38 @@ async function autoDiscoverRouter() {
 }
 
 async function loadAll() {
+  // loadHistory() reads outageWindows (for the chart's shaded outage bands), so
+  // it has to wait for loadOutages() — but nothing else here depends on
+  // anything else, so run the rest concurrently instead of one at a time.
   const outages = await loadOutages();
   outageWindows = outages;
-  await loadHistory();
-  await loadBanner();
-  await loadEvents();
-  await loadNetworkPanel();
-  await loadSpeedtestPanel();
+
+  // Fetched once and shared with both the banner and the network panel, rather
+  // than each independently requesting the same current-status endpoint.
+  let current = null;
+  try {
+    current = await (await fetch('/api/router/current')).json();
+  } catch (e) {
+    // renderBanner()/loadNetworkPanel() both show their own "couldn't load" state for null
+  }
+  renderBanner(current);
+
+  await Promise.all([
+    loadHistory(),
+    loadEvents(),
+    loadNetworkPanel(current),
+    loadSpeedtestPanel(),
+  ]);
 }
 
 loadRouter();
 loadRouterConfig();
 loadAll();
-setInterval(loadAll, 30000);
+// Matches the actual configured router-poll interval rather than a separate
+// hardcoded value — if that's turned up (e.g. to poll the router less often),
+// the page shouldn't keep re-fetching the same unchanged data faster than
+// new data can actually arrive.
+setInterval(loadAll, POLL_INTERVAL_SECONDS * 1000);
 
 // Only succeeds in a secure context (https:, or the browser's localhost
 // exemption) — a phone on the LAN visiting http://<lan-ip> won't register
