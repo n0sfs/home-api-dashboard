@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Home API Dashboard</title>
 
+<script>
+// Applied before the page paints, so a returning visitor who picked light
+// mode doesn't see a flash of the (default) dark theme first.
+(function () {
+  try {
+    if (localStorage.getItem('theme') === 'light') {
+      document.documentElement.dataset.theme = 'light';
+    }
+  } catch (e) {
+    // localStorage unavailable (private browsing, etc.) — just stays default dark.
+  }
+})();
+</script>
+
 <link rel="manifest" href="/manifest.json" />
 <meta name="theme-color" content="#0f1115" />
 <link rel="icon" href="/icons/icon-192.png" />
@@ -18,8 +32,19 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-  :root { color-scheme: dark; }
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; background: #0f1115; color: #e6e6e6; }
+  :root {
+    --bg: #0f1115;
+    --fg: #e6e6e6;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5f7;
+    --fg: #1a1d23;
+    color-scheme: light;
+  }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; background: var(--bg); color: var(--fg); }
+  .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .page-header button { white-space: nowrap; flex-shrink: 0; }
   h1 { font-size: 1.4rem; }
   .panel { border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
   .panel h2 { margin-top: 0; font-size: 1.1rem; display: flex; align-items: center; gap: .5rem; }
@@ -109,7 +134,10 @@
 </style>
 </head>
 <body>
-  <h1>Home API Dashboard</h1>
+  <div class="page-header">
+    <h1>Home API Dashboard</h1>
+    <button onclick="toggleTheme()" id="theme-toggle">Light mode</button>
+  </div>
   <p class="muted">Local Nest Wifi router status, polled every 30s and logged for history.</p>
 
   <div id="status-banner" class="banner unknown"><span class="big-dot"></span><span id="banner-text">Checking status...</span></div>
@@ -242,6 +270,70 @@
 
 <script>
 const POLL_INTERVAL_SECONDS = {{ poll_interval }};
+
+// ---------- Light/dark theme ----------
+// Most borders/card backgrounds elsewhere in this file use semi-transparent
+// gray (#8884 etc.) rather than solid colors, which blend reasonably against
+// either a light or dark page background without needing per-theme
+// overrides — so the only things that actually need theme-aware values are
+// the page background/text (plain CSS vars, see <style>), the chart axis
+// label color (solid, drawn on canvas — CSS can't reach it), and the map
+// tiles (a light basemap looks wrong dropped onto a dark page).
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+function chartTickColor() {
+  return currentTheme() === 'light' ? '#5b5f66' : '#8888';
+}
+
+const MAP_TILE_CONFIG = {
+  dark: {
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  },
+  light: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: 'abc',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  },
+};
+
+function updateChartsTheme() {
+  const color = chartTickColor();
+  for (const chart of [latencyChart, speedtestChart]) {
+    if (!chart) continue;
+    chart.options.scales.x.ticks.color = color;
+    chart.options.scales.y.ticks.color = color;
+    chart.update();
+  }
+}
+
+function updateMapTheme() {
+  if (!ispMap) return;
+  const cfg = MAP_TILE_CONFIG[currentTheme()];
+  if (ispTileLayer) ispMap.removeLayer(ispTileLayer);
+  ispTileLayer = L.tileLayer(cfg.url, { attribution: cfg.attribution, subdomains: cfg.subdomains, maxZoom: 18 }).addTo(ispMap);
+}
+
+function applyTheme(theme, persist) {
+  document.documentElement.dataset.theme = theme;
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.textContent = theme === 'light' ? 'Dark mode' : 'Light mode';
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeColorMeta) themeColorMeta.setAttribute('content', theme === 'light' ? '#f4f5f7' : '#0f1115');
+  if (persist) {
+    try { localStorage.setItem('theme', theme); } catch (e) { /* private browsing, etc. */ }
+  }
+  updateChartsTheme();
+  updateMapTheme();
+}
+
+function toggleTheme() {
+  applyTheme(currentTheme() === 'light' ? 'dark' : 'light', true);
+}
 
 function labelize(key) {
   return key
@@ -550,8 +642,8 @@ function makeChart(canvasId, opts) {
       maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: false },
       scales: {
-        x: { type: 'time', time: { unit: 'hour' }, ticks: { maxRotation: 0, color: '#8888' }, grid: { color: '#88881a' } },
-        y: { beginAtZero: true, ticks: { color: '#8888' }, grid: { color: '#88881a' }, ...(opts.yOptions || {}) },
+        x: { type: 'time', time: { unit: 'hour' }, ticks: { maxRotation: 0, color: chartTickColor() }, grid: { color: '#88881a' } },
+        y: { beginAtZero: true, ticks: { color: chartTickColor() }, grid: { color: '#88881a' }, ...(opts.yOptions || {}) },
       },
       plugins: {
         legend: { display: false },
@@ -612,8 +704,8 @@ function makeSpeedtestChart() {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { ticks: { maxRotation: 0, color: '#8888', autoSkip: true, maxTicksLimit: 14 }, grid: { display: false } },
-        y: { beginAtZero: true, ticks: { color: '#8888' }, grid: { color: '#88881a' } },
+        x: { ticks: { maxRotation: 0, color: chartTickColor(), autoSkip: true, maxTicksLimit: 14 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: chartTickColor() }, grid: { color: '#88881a' } },
       },
       plugins: {
         legend: { display: false },
@@ -778,6 +870,7 @@ async function loadNetworkPanel(cur) {
 
 let ispMap = null;
 let ispMapMarker = null;
+let ispTileLayer = null;
 
 function renderIspOutageInfo(isp) {
   const note = document.getElementById('isp-outage-note');
@@ -806,10 +899,7 @@ function renderIspOutageInfo(isp) {
     mapEl.style.display = 'block';
     if (!ispMap) {
       ispMap = L.map('isp-map', { zoomControl: false, attributionControl: true }).setView([isp.latitude, isp.longitude], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 18,
-      }).addTo(ispMap);
+      updateMapTheme();
       ispMapMarker = L.marker([isp.latitude, isp.longitude]).addTo(ispMap);
     } else {
       ispMapMarker.setLatLng([isp.latitude, isp.longitude]);
@@ -936,6 +1026,12 @@ async function loadAll() {
     loadSpeedtestPanel(),
   ]);
 }
+
+// Syncs the toggle button's label (and chart/map colors, though neither
+// exists yet at this point) with whatever theme the inline <head> script
+// already applied — that script sets the dataset attribute alone (it runs
+// before the DOM/this button exist), this fills in the rest.
+applyTheme(currentTheme(), false);
 
 loadRouter();
 loadRouterConfig();
