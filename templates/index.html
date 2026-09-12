@@ -94,6 +94,11 @@
   .controls-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: .75rem; }
   .controls-row label { display: flex; flex-direction: column; font-size: .78rem; opacity: .8; gap: .2rem; }
   .controls-row input { padding: .35rem .5rem; border-radius: 6px; border: 1px solid #8886; background: #8881; color: inherit; font-size: .85rem; }
+  select { padding: .35rem .5rem; border-radius: 6px; border: 1px solid #8886; background: #8881; color: inherit; font-size: .85rem; color-scheme: dark; }
+  :root[data-theme="light"] select { color-scheme: light; }
+  select option { background: var(--bg); color: var(--fg); }
+  .chart-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+  .chart-header label { display: flex; align-items: center; gap: .4rem; font-size: .8rem; opacity: .8; }
   a.button { display: inline-block; margin: .25rem .5rem .5rem 0; padding: .4rem .8rem; border-radius: 6px; border: 1px solid #8886; background: #8881; cursor: pointer; font-size: .9rem; text-decoration: none; color: inherit; }
   a.button:hover { background: #8882; }
 
@@ -204,13 +209,25 @@
       </div>
     </div>
     <div class="chart-wrap" style="margin-top:1.5rem;">
-      <p class="chart-title">Download / upload speed (Mbps)</p>
+      <div class="chart-header">
+        <p class="chart-title" style="margin:0;">Download / upload speed (Mbps)</p>
+        <label>Show
+          <select id="speedtest-range" onchange="loadSpeedtestPanel()">
+            <option value="1d">last 24 hours</option>
+            <option value="7d">last 7 days</option>
+            <option value="30d">last 30 days</option>
+            <option value="90d">last 90 days</option>
+            <option value="all" selected>all time</option>
+          </select>
+        </label>
+      </div>
       <div class="chart-legend">
         <span><span class="legend-swatch" style="background:#4f9dde"></span> Download</span>
         <span><span class="legend-swatch" style="background:#e67e22"></span> Upload</span>
       </div>
       <canvas id="speedtest-chart"></canvas>
     </div>
+    <p class="muted" id="speedtest-chart-note" style="margin-top:.5rem;"></p>
   </div>
 
   <div class="panel">
@@ -276,9 +293,11 @@ const POLL_INTERVAL_SECONDS = {{ poll_interval }};
 // gray (#8884 etc.) rather than solid colors, which blend reasonably against
 // either a light or dark page background without needing per-theme
 // overrides — so the only things that actually need theme-aware values are
-// the page background/text (plain CSS vars, see <style>), the chart axis
-// label color (solid, drawn on canvas — CSS can't reach it), and the map
-// tiles (a light basemap looks wrong dropped onto a dark page).
+// the page background/text (plain CSS vars, see <style>) and the chart axis
+// label color (solid, drawn on canvas — CSS can't reach it). The ISP map
+// stays on plain OSM tiles regardless of theme — free dark basemap tiles
+// (tried CartoDB's) turn out to require an API key now, so it's not worth
+// chasing; a light map embed on a dark page is a minor, acceptable mismatch.
 
 function currentTheme() {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
@@ -288,19 +307,6 @@ function chartTickColor() {
   return currentTheme() === 'light' ? '#5b5f66' : '#8888';
 }
 
-const MAP_TILE_CONFIG = {
-  dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  },
-  light: {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    subdomains: 'abc',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  },
-};
-
 function updateChartsTheme() {
   const color = chartTickColor();
   for (const chart of [latencyChart, speedtestChart]) {
@@ -309,13 +315,6 @@ function updateChartsTheme() {
     chart.options.scales.y.ticks.color = color;
     chart.update();
   }
-}
-
-function updateMapTheme() {
-  if (!ispMap) return;
-  const cfg = MAP_TILE_CONFIG[currentTheme()];
-  if (ispTileLayer) ispMap.removeLayer(ispTileLayer);
-  ispTileLayer = L.tileLayer(cfg.url, { attribution: cfg.attribution, subdomains: cfg.subdomains, maxZoom: 18 }).addTo(ispMap);
 }
 
 function applyTheme(theme, persist) {
@@ -328,7 +327,6 @@ function applyTheme(theme, persist) {
     try { localStorage.setItem('theme', theme); } catch (e) { /* private browsing, etc. */ }
   }
   updateChartsTheme();
-  updateMapTheme();
 }
 
 function toggleTheme() {
@@ -779,6 +777,23 @@ function renderSpeedtestCurrent(cur) {
   document.getElementById('speedtest-ping').textContent = cur.ping_ms != null ? `${cur.ping_ms.toFixed(0)} ms` : '—';
 }
 
+// Seconds of lookback for each preset — 'all' is handled separately (no
+// start filter at all, just a high row cap) rather than an arbitrarily large
+// number here, so it always genuinely means "everything," not "a very long
+// but technically bounded window."
+const SPEEDTEST_RANGE_SECONDS = { '1d': 86400, '7d': 7 * 86400, '30d': 30 * 86400, '90d': 90 * 86400 };
+
+function speedtestRangeQuery() {
+  const range = document.getElementById('speedtest-range').value;
+  // Explicit start=0 rather than no filter at all: the backend only lifts its
+  // row cap from 500 to 5000 when a range is given at all, so "all time"
+  // needs a (trivially-always-true) start filter to actually get the higher
+  // cap instead of silently being limited to the most recent 500 samples.
+  if (range === 'all') return '?start=0';
+  const start = (Date.now() / 1000) - SPEEDTEST_RANGE_SECONDS[range];
+  return `?start=${start}`;
+}
+
 async function loadSpeedtestPanel() {
   try {
     const r = await fetch('/api/speedtest/current');
@@ -787,8 +802,9 @@ async function loadSpeedtestPanel() {
     document.getElementById('speedtest-note').textContent = 'Error loading speedtest status: ' + e;
   }
 
+  const chartNote = document.getElementById('speedtest-chart-note');
   try {
-    const r2 = await fetch('/api/speedtest/history');
+    const r2 = await fetch('/api/speedtest/history' + speedtestRangeQuery());
     const points = (await r2.json()).filter(p => p.success);
     const bucketed = bucketSpeedtestPoints(points);
     if (!speedtestChart) speedtestChart = makeSpeedtestChart();
@@ -796,8 +812,11 @@ async function loadSpeedtestPanel() {
     speedtestChart.data.datasets[0].data = bucketed.download;
     speedtestChart.data.datasets[1].data = bucketed.upload;
     speedtestChart.update();
+    chartNote.textContent = points.length
+      ? `${points.length} successful test(s) in this range.`
+      : 'No successful tests in this range yet.';
   } catch (e) {
-    // chart just stays empty; the note above already reports current-result errors
+    chartNote.textContent = 'Error loading speed test history: ' + e;
   }
 }
 
@@ -870,7 +889,6 @@ async function loadNetworkPanel(cur) {
 
 let ispMap = null;
 let ispMapMarker = null;
-let ispTileLayer = null;
 
 function renderIspOutageInfo(isp) {
   const note = document.getElementById('isp-outage-note');
@@ -899,7 +917,10 @@ function renderIspOutageInfo(isp) {
     mapEl.style.display = 'block';
     if (!ispMap) {
       ispMap = L.map('isp-map', { zoomControl: false, attributionControl: true }).setView([isp.latitude, isp.longitude], 12);
-      updateMapTheme();
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+      }).addTo(ispMap);
       ispMapMarker = L.marker([isp.latitude, isp.longitude]).addTo(ispMap);
     } else {
       ispMapMarker.setLatLng([isp.latitude, isp.longitude]);
